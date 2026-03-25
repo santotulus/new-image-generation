@@ -1,5 +1,20 @@
 import { GoogleGenAI, Modality } from "@google/genai";
 
+// --- Interactive Canvas Initialization ---
+declare global {
+  interface Window {
+    interactiveCanvas: any;
+  }
+}
+
+if (window.interactiveCanvas) {
+  window.interactiveCanvas.ready({
+    onUpdate(data: any) {
+      console.log('Interactive Canvas Update:', data);
+    },
+  });
+}
+
 // --- Sidebar Toggle Script ---
 const mobileMenuButton = document.getElementById('mobile-menu-button') as HTMLButtonElement;
 const sidebar = document.getElementById('sidebar') as HTMLElement;
@@ -186,6 +201,44 @@ function showModal(message: string) {
     document.body.appendChild(modalBackdrop);
 }
 
+// --- Image Cropping Helper using Canvas API ---
+async function cropBase64Image(base64: string, targetRatio: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            if (!ctx) {
+                reject(new Error("Could not get canvas context"));
+                return;
+            }
+
+            const [targetW, targetH] = targetRatio.split(':').map(Number);
+            const targetAspect = targetW / targetH;
+            const currentAspect = img.width / img.height;
+
+            let sourceX = 0, sourceY = 0, sourceW = img.width, sourceH = img.height;
+
+            if (currentAspect > targetAspect) {
+                // Image is wider than target, crop sides
+                sourceW = img.height * targetAspect;
+                sourceX = (img.width - sourceW) / 2;
+            } else if (currentAspect < targetAspect) {
+                // Image is taller than target, crop top/bottom
+                sourceH = img.width / targetAspect;
+                sourceY = (img.height - sourceH) / 2;
+            }
+
+            canvas.width = sourceW;
+            canvas.height = sourceH;
+            ctx.drawImage(img, sourceX, sourceY, sourceW, sourceH, 0, 0, sourceW, sourceH);
+            resolve(canvas.toDataURL('image/png'));
+        };
+        img.onerror = (err) => reject(err);
+        img.src = base64;
+    });
+}
+
 async function generateImage(parts: any[], aspectRatio: string = '1:1') {
     // Lazy initialization of the AI client
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
@@ -219,7 +272,10 @@ async function generateImage(parts: any[], aspectRatio: string = '1:1') {
                 if (part.inlineData) {
                     const base64ImageBytes = part.inlineData.data;
                     const mimeType = part.inlineData.mimeType;
-                    return `data:${mimeType};base64,${base64ImageBytes}`;
+                    const dataUrl = `data:${mimeType};base64,${base64ImageBytes}`;
+                    
+                    // Use Canvas API to ensure precise aspect ratio
+                    return await cropBase64Image(dataUrl, aspectRatio);
                 }
             }
             throw new Error("API response did not contain image data.");
